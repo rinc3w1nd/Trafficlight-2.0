@@ -13,13 +13,29 @@
          <h1>Traffic Light</h1>
       </div>
    </div>
+
+   {% if closing and closing.active %}
+   <div class="closing-status">
+      <strong>Closing in progress</strong> —
+      Phase: {{ closing.phase }}
+      {% if closing.minutes_remaining is not none %}
+         | {{ closing.minutes_remaining }} min remaining
+      {% endif %}
+      {% if closing.close_time_str %}
+         | Close time: {{ closing.close_time_str }}
+      {% endif %}
+   </div>
+   {% endif %}
+
    {% for name, info in pins.items() %}
       <div class="row">
          <div class="col-md-1">
             <div class="circle" id="{{ name }}-{{ info.state }}"></div>
          </div>
          <div class="col-md-3">
-           {% if info.state == 'on' %}
+           {% if closing and closing.active %}
+              <span class="locked-label">Locked</span>
+           {% elif info.state == 'on' %}
               <a href="/toggle/{{ name }}/off" class="button" role="button">Turn Off</a>
            {% else %}
               <a href="/toggle/{{ name }}/on" class="button" role="button">Turn On</a>
@@ -27,10 +43,30 @@
          </div>
       </div>
    {% endfor %}
+
    {% if message %}
    <div>
       <h3>Output:</h3>
       <p>{{ message }}</p>
+   </div>
+   {% endif %}
+
+   {% if closing and closing.active %}
+   <div class="closing-form">
+      <h3>Cancel Closing</h3>
+      <form method="post" action="/cancel-close">
+         <input type="password" name="password" placeholder="Password" required>
+         <button type="submit" class="button">Cancel Close</button>
+      </form>
+   </div>
+   {% else %}
+   <div class="closing-form">
+      <h3>Schedule Close</h3>
+      <form method="post" action="/close">
+         <input type="number" name="minutes" min="1" placeholder="Minutes" required>
+         <input type="password" name="password" placeholder="Password" required>
+         <button type="submit" class="button">Start Closing</button>
+      </form>
    </div>
    {% endif %}
 </div>

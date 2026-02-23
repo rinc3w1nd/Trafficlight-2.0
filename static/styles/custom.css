@@ -27,3 +27,29 @@
 #green-off{
   background: #006000;
 }
+
+.closing-status {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  color: #856404;
+  padding: 10px 15px;
+  border-radius: 4px;
+  margin: 10px 0;
+  font-size: 0.95em;
+}
+
+.closing-form {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #ddd;
+}
+
+.closing-form input {
+  margin-right: 8px;
+  margin-bottom: 8px;
+}
+
+.locked-label {
+  color: #999;
+  font-style: italic;
+}
