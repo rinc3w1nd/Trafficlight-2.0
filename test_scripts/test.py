@@ -1,39 +1,43 @@
-#!/usr/bin/python2
-print('script start')
-import RPi.GPIO as GPIO
-import time
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
+#!/usr/bin/env python3
+"""Test script: run a traffic light sequence continuously.
 
-seq = ['red', 'yellow', 'green', 'yellow',]
+Press Ctrl+C to stop. GPIO pins are cleaned up automatically by gpiozero.
 
-pins = {
-	2 : {'name' : 'red', 'state' : GPIO.LOW},
-	3 : {'name' : 'green', 'state' : GPIO.LOW},
-	4 : {'name' : 'yellow', 'state' : GPIO.LOW}
-	}
+Usage:
+    python3 test.py
+    GPIOZERO_PIN_FACTORY=mock python3 test.py  # Run without hardware
+"""
 
-for pin in pins:
-	GPIO.setup(pin, GPIO.OUT)
-	GPIO.output(pin, GPIO.LOW)
+from time import sleep
 
-#color = input('Color? ')
-def light_off():
-	for i in pins:
-		GPIO.output(i, GPIO.LOW)
+from gpiozero import TrafficLights
 
-def light_on(color):
-	for i in pins:
-		if pins[i]['name'] == color:
-			GPIO.output(i, GPIO.HIGH)	
-			time.sleep(.19)
-			GPIO.output(i, GPIO.LOW)
+SEQUENCE: list[str] = ["red", "yellow", "green", "yellow"]
+STEP_DURATION: float = 0.19
 
-def sequence(seq):
-	while True:
-		for i in seq:
-			light_on(i)
+traffic_lights = TrafficLights(red=17, yellow=27, green=22)
 
-#light_on(color)
-sequence(seq)
-print('script end')
+
+def light_on(color: str) -> None:
+    """Flash a single light briefly."""
+    led = getattr(traffic_lights, color)
+    led.on()
+    sleep(STEP_DURATION)
+    led.off()
+
+
+def run_sequence(sequence: list[str]) -> None:
+    """Run the light sequence in a loop until interrupted."""
+    print("Starting traffic light sequence (Ctrl+C to stop)...")
+    try:
+        while True:
+            for color in sequence:
+                light_on(color)
+    except KeyboardInterrupt:
+        print("\nSequence stopped.")
+    finally:
+        traffic_lights.off()
+
+
+if __name__ == "__main__":
+    run_sequence(SEQUENCE)

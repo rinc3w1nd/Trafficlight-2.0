@@ -1,40 +1,14 @@
-#!/usr/bin/python2
-print('script start')
-import RPi.GPIO as GPIO
-import time
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
+#!/usr/bin/env python3
+"""Turn all traffic lights off.
 
-seq = ['red', 'yellow', 'green', 'yellow',]
+Usage:
+    python3 off.py
+    GPIOZERO_PIN_FACTORY=mock python3 off.py  # Run without hardware
+"""
 
-pins = {
-	2 : {'name' : 'red', 'state' : GPIO.LOW},
-	3 : {'name' : 'green', 'state' : GPIO.LOW},
-	4 : {'name' : 'yellow', 'state' : GPIO.LOW}
-	}
+from gpiozero import TrafficLights
 
-for pin in pins:
-	GPIO.setup(pin, GPIO.OUT)
-	GPIO.output(pin, GPIO.LOW)
-
-#color = input('Color? ')
-def light_off():
-	for i in pins:
-		GPIO.output(i, GPIO.LOW)
-
-def light_on(color):
-	for i in pins:
-		if pins[i]['name'] == color:
-			GPIO.output(i, GPIO.HIGH)	
-			time.sleep(.5)
-			GPIO.output(i, GPIO.LOW)
-
-def sequence(seq):
-	while True:
-		for i in seq:
-			light_on(i)
-
-#light_on(color)
-#sequence(seq)
-light_off()
-print('script end')
+traffic_lights = TrafficLights(red=17, yellow=27, green=22)
+traffic_lights.off()
+traffic_lights.close()
+print("All lights turned off.")

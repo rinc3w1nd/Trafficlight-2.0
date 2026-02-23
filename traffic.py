@@ -1,136 +1,166 @@
-#!/usr/bin/python3
-import RPi.GPIO as GPIO
-from flask import Flask, render_template, request
-from time import sleep
-from random import randint, choice
+#!/usr/bin/env python3
+"""Traffic light controller web application.
 
+A Flask-based web interface for controlling a Raspberry Pi traffic light
+with red, yellow, and green LEDs via gpiozero.
+"""
+
+import atexit
+import logging
+import os
+from random import choice
+from time import sleep
+
+from flask import Flask, abort, render_template
+from gpiozero import TrafficLights
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+RED_PIN: int = int(os.environ.get("TRAFFIC_RED_PIN", "17"))
+YELLOW_PIN: int = int(os.environ.get("TRAFFIC_YELLOW_PIN", "27"))
+GREEN_PIN: int = int(os.environ.get("TRAFFIC_GREEN_PIN", "22"))
+HOST: str = os.environ.get("TRAFFIC_HOST", "0.0.0.0")
+PORT: int = int(os.environ.get("TRAFFIC_PORT", "80"))
+BLINK_ON_TIME: float = float(os.environ.get("TRAFFIC_BLINK_ON", "0.25"))
+BLINK_OFF_TIME: float = float(os.environ.get("TRAFFIC_BLINK_OFF", "0.25"))
+PARTY_DEFAULT_ITERATIONS: int = int(os.environ.get("TRAFFIC_PARTY_ITERATIONS", "5"))
+PARTY_SINGLE_ITERATIONS: int = 19
+COUNTDOWN_STEP_DELAY: float = 1.0
+LIGHT_ORDER: tuple[str, ...] = ("red", "yellow", "green")
+VALID_COLORS: set[str] = set(LIGHT_ORDER)
+VALID_ACTIONS: set[str] = {"on", "off", "toggle", "party"}
+MAX_RAGER_ITERATIONS: int = 100
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("traffic")
+
+# ---------------------------------------------------------------------------
+# Hardware
+# ---------------------------------------------------------------------------
+traffic_lights = TrafficLights(red=RED_PIN, yellow=YELLOW_PIN, green=GREEN_PIN)
+atexit.register(traffic_lights.close)
+logger.info(
+    "Traffic lights initialized: red=%d, yellow=%d, green=%d",
+    RED_PIN, YELLOW_PIN, GREEN_PIN,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def get_light_states() -> dict[str, dict[str, int | str]]:
+    """Return current state of each light for template rendering."""
+    states: dict[str, dict[str, int | str]] = {}
+    for color in LIGHT_ORDER:
+        led = getattr(traffic_lights, color)
+        states[color] = {
+            "pin": led.pin.number,
+            "state": "on" if led.is_lit else "off",
+        }
+    return states
+
+
+def blinky_blink(color: str) -> None:
+    """Blink a single LED once, blocking until complete."""
+    led = getattr(traffic_lights, color)
+    led.blink(on_time=BLINK_ON_TIME, off_time=BLINK_OFF_TIME, n=1, background=False)
+
+
+def count_down() -> None:
+    """Flash each light in sequence: red, yellow, green."""
+    traffic_lights.off()
+    sleep(BLINK_ON_TIME)
+    for color in LIGHT_ORDER:
+        led = getattr(traffic_lights, color)
+        led.on()
+        sleep(COUNTDOWN_STEP_DELAY)
+        led.off()
+
+
+# ---------------------------------------------------------------------------
+# Flask application
+# ---------------------------------------------------------------------------
 app = Flask(__name__)
 
-GPIO.setmode(GPIO.BCM)
-
-# Create a dictionary called pins to store the pin number, name, and pin state:
-# pins = {
-#     17 : {'name' : 'red', 'state' : GPIO.LOW},
-#     27 : {'name' : 'yellow', 'state' : GPIO.LOW},
-#     22 : {'name' : 'green', 'state' : GPIO.LOW},
-# }
-
-pins = {
-    'red' : [17, GPIO.LOW],
-    'yellow' : [27, GPIO.LOW],
-    'green' : [22, GPIO.LOW]
-}
-
-
-# Set each pin as an output and make it low:
-for pin, state in pins.values():
-    # print(pin)
-    GPIO.setup(pin, GPIO.OUT)
-    GPIO.output(pin, GPIO.LOW)
-
-def humanize_pin_state(pins):
-    for name, values in pins.items():
-        pin_state = values[1]
-        if pin_state == GPIO.HIGH:
-            pins[name][1] = 'on'
-        else:
-            pins[name][1] = 'off'
-    return pins
 
 @app.route("/")
-def main():
-    getPinState()
-    # Put the pin dictionary into the template data dictionary:
-    templateData = {
-        'pins' : humanize_pin_state(pins)
-        }
-    # Pass the template data into the template main.html and return it to the user
-    return render_template('main.html', **templateData)
+def main() -> str:
+    """Render the main page showing current light states."""
+    return render_template("main.html", pins=get_light_states())
 
-# The function below is executed when someone requests a URL with the pin number and action in it:
-# changePin is now color name
+
 @app.route("/toggle/<color>/<action>")
-def action(color, action):
-    # Convert the pin from the URL into an integer:
-    changePin = pins[color][0]
-    # Get the device name for the pin being changed:
-    # deviceName = pins[changePin]['name']
-    deviceName = color
-    # If the action part of the URL is "on," execute the code indented below:
+def toggle(color: str, action: str) -> str:
+    """Control a single traffic light.
+
+    Args:
+        color: One of 'red', 'yellow', 'green'.
+        action: One of 'on', 'off', 'toggle', 'party'.
+    """
+    if color not in VALID_COLORS:
+        logger.warning("Invalid color requested: %s", color)
+        abort(404, description=f"Unknown color: {color}")
+    if action not in VALID_ACTIONS:
+        logger.warning("Invalid action requested: %s", action)
+        abort(404, description=f"Unknown action: {action}")
+
+    led = getattr(traffic_lights, color)
+
     if action == "on":
-        # Set the pin high:
-        GPIO.output(changePin, GPIO.HIGH)
-        # Save the status message to be passed into the template:
-        message = "Turned " + deviceName + " on."
-    if action == "off":
-        GPIO.output(changePin, GPIO.LOW)
-        message = "Turned " + deviceName + " off."
-    if action == "toggle":
-        # Read the pin and set it to whatever it isn't (that is, toggle it):
-        GPIO.output(changePin, not GPIO.input(changePin))
-        message = "Toggled " + deviceName + "."
-    if action == "party":
-        for i in range(1,20):
-            blinkyBlink(changePin)
-        message = "Partied Hard"
+        led.on()
+        message = f"Turned {color} on."
+    elif action == "off":
+        led.off()
+        message = f"Turned {color} off."
+    elif action == "toggle":
+        led.toggle()
+        message = f"Toggled {color}."
+    elif action == "party":
+        for _ in range(PARTY_SINGLE_ITERATIONS):
+            blinky_blink(color)
+        message = "Partied hard."
 
-    getPinState()
+    logger.info(message)
+    return render_template("main.html", message=message, pins=get_light_states())
 
-    # Along with the pin dictionary, put the message into the template data dictionary:
-    templateData = {
-        'message' : message,
-        'pins' : humanize_pin_state(pins)
-    }
-
-    return render_template('main.html', **templateData)
 
 @app.route("/rager/")
 @app.route("/rager/<iterations>")
-def partyHard(iterations = 5): #Add untested partyHard mode
-    countDown()
-    sleep(1)
+def party_hard(iterations: str = "5") -> str:
+    """Run a random blink party across all lights.
+
+    Args:
+        iterations: Number of random blinks (default 5, capped at 100).
+    """
     try:
-        iterations = int(iterations)
-    except:
-        iterations = 5
-    for i in range(iterations):
-        # pin = choice(list(pins.values()))
-        pin = choice(list(pins.values()))[0]
-        blinkyBlink(pin)
-    templateData = {
-        # 'message' : message,
-        'pins' : humanize_pin_state(pins)
-    }
-    return render_template('main.html', **templateData)
+        num_iterations = min(int(iterations), MAX_RAGER_ITERATIONS)
+        if num_iterations < 0:
+            num_iterations = PARTY_DEFAULT_ITERATIONS
+    except ValueError:
+        logger.warning("Invalid iterations value: %r, using default", iterations)
+        num_iterations = PARTY_DEFAULT_ITERATIONS
 
-def getPinState():
-    # For each pin, read the pin state and store it in the pins dictionary:
-    for pin in pins:
-        pins[pin][1] = GPIO.input(pins[pin][0])
+    count_down()
+    sleep(COUNTDOWN_STEP_DELAY)
 
-def blinkyBlink(pin):
-    GPIO.output(pin, GPIO.HIGH)
-    sleep(0.25)
-    GPIO.output(pin, GPIO.LOW)
-    sleep(0.25)
+    colors = list(LIGHT_ORDER)
+    for _ in range(num_iterations):
+        blinky_blink(choice(colors))
 
-def goLow():
-    for pin, state in pins.values(): 
-        GPIO.output(pin, GPIO.LOW)
+    logger.info("Rager completed: %d iterations", num_iterations)
+    return render_template("main.html", pins=get_light_states())
 
-def countDown():
-    goLow()
-    sleep(.25)
-    for pin, state in pins.values():
-        GPIO.output(pin, GPIO.HIGH)
-        sleep(1)
-        GPIO.output(pin, GPIO.LOW)
 
-# def rager(curr, prev):
-#     for i in range(1,randint(4,16)):
-#         curr = curr if curr != prev else choice(list(pins.keys())) #give it a second shot of being something else for a little more fun.
-#         blinkyBlink(curr)
-#     return curr
-
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=80, debug=False)
+    logger.info("Starting traffic light server on %s:%d", HOST, PORT)
+    app.run(host=HOST, port=PORT, debug=False)

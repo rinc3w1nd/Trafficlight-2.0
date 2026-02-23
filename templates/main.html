@@ -1,7 +1,6 @@
 <html lang="en">
 <head>
    <title>Traffic Light</title>
-   <!-- Latest compiled and minified CSS -->
    <link rel="stylesheet" href="{{ url_for('static', filename='styles/mini-default.css') }}">
    <link rel="stylesheet" href="{{ url_for('static', filename='styles/custom.css') }}">
    <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -14,16 +13,16 @@
          <h1>Traffic Light</h1>
       </div>
    </div>
-   {% for name, values in pins.items() %}
+   {% for name, info in pins.items() %}
       <div class="row">
          <div class="col-md-1">
-            <div class="circle" id="{{name}}-{{values[1]}}"></div>
+            <div class="circle" id="{{ name }}-{{ info.state }}"></div>
          </div>
          <div class="col-md-3">
-           {% if values[1] == 'on' %}
-              <a href="/toggle/{{name}}/off" class="button" role="button">Turn Off</a>
+           {% if info.state == 'on' %}
+              <a href="/toggle/{{ name }}/off" class="button" role="button">Turn Off</a>
            {% else %}
-              <a href="/toggle/{{name}}/on" class="button" role="button">Turn On</a>
+              <a href="/toggle/{{ name }}/on" class="button" role="button">Turn On</a>
            {% endif %}
          </div>
       </div>
@@ -31,7 +30,7 @@
    {% if message %}
    <div>
       <h3>Output:</h3>
-      <p>{{message}}</p>
+      <p>{{ message }}</p>
    </div>
    {% endif %}
 </div>
