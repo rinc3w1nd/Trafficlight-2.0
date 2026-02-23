@@ -1,74 +1,498 @@
+<!DOCTYPE html>
 <html lang="en">
 <head>
-   <title>Traffic Light</title>
-   <link rel="stylesheet" href="{{ url_for('static', filename='styles/mini-default.css') }}">
-   <link rel="stylesheet" href="{{ url_for('static', filename='styles/custom.css') }}">
-   <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Traffic Light</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #121212;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* --- Banners --- */
+        .banner {
+            display: none;
+            padding: 10px 20px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 14px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .banner.visible { display: block; }
+        .banner-lock {
+            background: #b71c1c;
+            color: #fff;
+        }
+        .banner-closing {
+            color: #fff;
+        }
+        .banner-closing.phase-normal { background: #1565c0; }
+        .banner-closing.phase-warning { background: #e65100; }
+        .banner-closing.phase-flashing { background: #b71c1c; }
+        .banner-closing.phase-closed { background: #4a0000; }
+        .banner-closing.phase-off { background: #333; }
+
+        /* --- Header --- */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid #2a2a2a;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #e0e0e0;
+        }
+        .auth-area {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .auth-area input[type="password"] {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 120px;
+        }
+        .auth-area input[type="password"]::placeholder { color: #777; }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #1b5e20;
+            color: #a5d6a7;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        /* --- Buttons --- */
+        .btn {
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s, background 0.2s;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .btn-primary { background: #4fc3f7; color: #121212; }
+        .btn-danger { background: #ef5350; color: #fff; }
+        .btn-success { background: #66bb6a; color: #121212; }
+        .btn-warn { background: #ffa726; color: #121212; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid #555;
+            color: #e0e0e0;
+        }
+
+        /* --- Main layout --- */
+        .main {
+            display: flex;
+            gap: 40px;
+            padding: 40px 24px;
+            max-width: 900px;
+            margin: 0 auto;
+            justify-content: center;
+        }
+        @media (max-width: 640px) {
+            .main {
+                flex-direction: column;
+                align-items: center;
+                gap: 30px;
+                padding: 24px 16px;
+            }
+        }
+
+        /* --- Traffic light housing --- */
+        .tl-housing {
+            background: #1a1a1a;
+            border: 3px solid #2a2a2a;
+            border-radius: 20px;
+            padding: 24px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            width: 130px;
+            flex-shrink: 0;
+        }
+        .led {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+
+        /* Off states */
+        .led-red {
+            background: radial-gradient(circle at 35% 35%, #3a1010, #1a0505);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .led-yellow {
+            background: radial-gradient(circle at 35% 35%, #3a3010, #1a1505);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .led-green {
+            background: radial-gradient(circle at 35% 35%, #103a10, #051a05);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+        /* On states */
+        .led-red.on {
+            background: radial-gradient(circle at 35% 35%, #ff6659, #d32f2f);
+            box-shadow: 0 0 15px rgba(211,47,47,0.6),
+                        0 0 40px rgba(211,47,47,0.3),
+                        0 0 80px rgba(211,47,47,0.15);
+        }
+        .led-yellow.on {
+            background: radial-gradient(circle at 35% 35%, #ffee58, #f9a825);
+            box-shadow: 0 0 15px rgba(249,168,37,0.6),
+                        0 0 40px rgba(249,168,37,0.3),
+                        0 0 80px rgba(249,168,37,0.15);
+        }
+        .led-green.on {
+            background: radial-gradient(circle at 35% 35%, #69f0ae, #2e7d32);
+            box-shadow: 0 0 15px rgba(46,125,50,0.6),
+                        0 0 40px rgba(46,125,50,0.3),
+                        0 0 80px rgba(46,125,50,0.15);
+        }
+
+        /* --- Control panel --- */
+        .controls {
+            flex: 1;
+            max-width: 420px;
+        }
+        .control-section {
+            background: #1e1e1e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .control-section h3 {
+            font-size: 14px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 14px;
+        }
+        .light-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+        }
+        .light-row + .light-row {
+            border-top: 1px solid #2a2a2a;
+        }
+        .light-label {
+            font-weight: 600;
+            font-size: 15px;
+            text-transform: capitalize;
+            width: 70px;
+        }
+        .light-btns {
+            display: flex;
+            gap: 6px;
+        }
+        .party-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 4px;
+        }
+        .party-row input[type="number"] {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 70px;
+        }
+
+        /* --- Keyholder section --- */
+        .keyholder-section {
+            display: none;
+        }
+        .keyholder-section.visible {
+            display: block;
+        }
+        .close-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .close-row input[type="number"] {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 80px;
+        }
+
+        /* --- Toast --- */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(80px);
+            background: #333;
+            color: #e0e0e0;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 200;
+            pointer-events: none;
+        }
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+        .toast.error { background: #b71c1c; }
+    </style>
 </head>
-
 <body>
-<div class="container">
-   <div class="row">
-      <div class="col-md-2">
-         <h1>Traffic Light</h1>
-      </div>
-   </div>
 
-   {% if closing and closing.active %}
-   <div class="closing-status">
-      <strong>Closing in progress</strong> —
-      Phase: {{ closing.phase }}
-      {% if closing.minutes_remaining is not none %}
-         | {{ closing.minutes_remaining }} min remaining
-      {% endif %}
-      {% if closing.close_time_str %}
-         | Close time: {{ closing.close_time_str }}
-      {% endif %}
-   </div>
-   {% endif %}
+<!-- Banners -->
+<div class="banner banner-lock" id="lockBanner">Locked by keyholder — controls disabled</div>
+<div class="banner banner-closing" id="closingBanner"></div>
 
-   {% for name, info in pins.items() %}
-      <div class="row">
-         <div class="col-md-1">
-            <div class="circle" id="{{ name }}-{{ info.state }}"></div>
-         </div>
-         <div class="col-md-3">
-           {% if closing and closing.active %}
-              <span class="locked-label">Locked</span>
-           {% elif info.state == 'on' %}
-              <a href="/toggle/{{ name }}/off" class="button" role="button">Turn Off</a>
-           {% else %}
-              <a href="/toggle/{{ name }}/on" class="button" role="button">Turn On</a>
-           {% endif %}
-         </div>
-      </div>
-   {% endfor %}
-
-   {% if message %}
-   <div>
-      <h3>Output:</h3>
-      <p>{{ message }}</p>
-   </div>
-   {% endif %}
-
-   {% if closing and closing.active %}
-   <div class="closing-form">
-      <h3>Cancel Closing</h3>
-      <form method="post" action="/cancel-close">
-         <input type="password" name="password" placeholder="Password" required>
-         <button type="submit" class="button">Cancel Close</button>
-      </form>
-   </div>
-   {% else %}
-   <div class="closing-form">
-      <h3>Schedule Close</h3>
-      <form method="post" action="/close">
-         <input type="number" name="minutes" min="1" placeholder="Minutes" required>
-         <input type="password" name="password" placeholder="Password" required>
-         <button type="submit" class="button">Start Closing</button>
-      </form>
-   </div>
-   {% endif %}
+<!-- Header -->
+<div class="header">
+    <h1>Traffic Light</h1>
+    <div class="auth-area" id="authArea">
+        <!-- Filled by JS -->
+    </div>
 </div>
+
+<!-- Main -->
+<div class="main">
+    <!-- Traffic light housing -->
+    <div class="tl-housing">
+        <div class="led led-red" id="ledRed"></div>
+        <div class="led led-yellow" id="ledYellow"></div>
+        <div class="led led-green" id="ledGreen"></div>
+    </div>
+
+    <!-- Control panel -->
+    <div class="controls">
+        <!-- Light controls -->
+        <div class="control-section">
+            <h3>Light Controls</h3>
+            <div class="light-row">
+                <span class="light-label">Red</span>
+                <div class="light-btns">
+                    <button class="btn btn-sm btn-primary light-btn" onclick="lightAction('red','on')">On</button>
+                    <button class="btn btn-sm btn-outline light-btn" onclick="lightAction('red','off')">Off</button>
+                    <button class="btn btn-sm btn-outline light-btn" onclick="lightAction('red','toggle')">Toggle</button>
+                </div>
+            </div>
+            <div class="light-row">
+                <span class="light-label">Yellow</span>
+                <div class="light-btns">
+                    <button class="btn btn-sm btn-primary light-btn" onclick="lightAction('yellow','on')">On</button>
+                    <button class="btn btn-sm btn-outline light-btn" onclick="lightAction('yellow','off')">Off</button>
+                    <button class="btn btn-sm btn-outline light-btn" onclick="lightAction('yellow','toggle')">Toggle</button>
+                </div>
+            </div>
+            <div class="light-row">
+                <span class="light-label">Green</span>
+                <div class="light-btns">
+                    <button class="btn btn-sm btn-primary light-btn" onclick="lightAction('green','on')">On</button>
+                    <button class="btn btn-sm btn-outline light-btn" onclick="lightAction('green','off')">Off</button>
+                    <button class="btn btn-sm btn-outline light-btn" onclick="lightAction('green','toggle')">Toggle</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Party mode -->
+        <div class="control-section">
+            <h3>Party Mode</h3>
+            <div class="party-row">
+                <input type="number" id="partyIter" min="1" max="100" value="5" placeholder="Iters">
+                <button class="btn btn-warn light-btn" onclick="rager()">Party!</button>
+            </div>
+        </div>
+
+        <!-- Keyholder controls -->
+        <div class="control-section keyholder-section" id="keyholderSection">
+            <h3>Keyholder Controls</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-danger" id="lockBtn" onclick="toggleLock()">Lock System</button>
+            </div>
+            <div class="close-row" id="closeRow">
+                <input type="number" id="closeMinutes" min="1" value="60" placeholder="Minutes">
+                <button class="btn btn-danger" onclick="scheduleClose()">Schedule Close</button>
+            </div>
+            <div id="cancelRow" style="display:none;margin-top:10px;">
+                <button class="btn btn-success" onclick="cancelClose()">Cancel Closing</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+    let state = {};
+    let toastTimer = null;
+
+    // --- Toast ---
+    function showToast(msg, isError) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.className = 'toast show' + (isError ? ' error' : '');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { t.className = 'toast'; }, 3000);
+    }
+
+    // --- API helper ---
+    async function api(url, body) {
+        try {
+            const opts = { method: 'POST', headers: {'Content-Type': 'application/json'} };
+            if (body !== undefined) opts.body = JSON.stringify(body);
+            const res = await fetch(url, opts);
+            const data = await res.json();
+            if (!data.ok) showToast(data.message, true);
+            else if (data.message) showToast(data.message, false);
+            poll();
+            return data;
+        } catch (e) {
+            showToast('Network error', true);
+        }
+    }
+
+    // --- Actions ---
+    function lightAction(color, action) { api('/api/light/' + color + '/' + action); }
+    function rager() {
+        const n = parseInt(document.getElementById('partyIter').value) || 5;
+        api('/api/rager', {iterations: n});
+    }
+    function toggleLock() {
+        api('/api/lock', {locked: !state.lock?.locked});
+    }
+    function scheduleClose() {
+        const m = parseInt(document.getElementById('closeMinutes').value) || 60;
+        api('/api/close', {minutes: m});
+    }
+    function cancelClose() { api('/api/cancel-close'); }
+
+    function doLogin() {
+        const input = document.getElementById('pinInput');
+        if (!input) return;
+        api('/api/auth/login', {pin: input.value});
+    }
+    function doLogout() { api('/api/auth/logout'); }
+
+    // --- Polling ---
+    async function poll() {
+        try {
+            const res = await fetch('/api/status');
+            state = await res.json();
+            render();
+        } catch (e) { /* silent */ }
+    }
+
+    function render() {
+        // LEDs
+        ['red', 'yellow', 'green'].forEach(c => {
+            const el = document.getElementById('led' + c.charAt(0).toUpperCase() + c.slice(1));
+            if (state.lights?.[c] === 'on') el.classList.add('on');
+            else el.classList.remove('on');
+        });
+
+        // Lock banner
+        const lockBanner = document.getElementById('lockBanner');
+        if (state.lock?.locked && !state.is_keyholder) {
+            lockBanner.classList.add('visible');
+        } else {
+            lockBanner.classList.remove('visible');
+        }
+
+        // Closing banner
+        const closingBanner = document.getElementById('closingBanner');
+        if (state.closing?.active) {
+            const c = state.closing;
+            const phase = c.phase || 'normal';
+            closingBanner.className = 'banner banner-closing visible phase-' + phase;
+            let text = 'Closing';
+            if (c.minutes_remaining != null) text += ' — ' + c.minutes_remaining + ' min remaining';
+            if (c.close_time_str) text += ' (at ' + c.close_time_str + ')';
+            text += ' — Phase: ' + phase;
+            closingBanner.textContent = text;
+        } else {
+            closingBanner.classList.remove('visible');
+        }
+
+        // Disable controls when locked/closing and not keyholder
+        const blocked = (!state.is_keyholder && (state.lock?.locked || state.closing?.active));
+        document.querySelectorAll('.light-btn').forEach(b => { b.disabled = blocked; });
+
+        // Auth area
+        const authArea = document.getElementById('authArea');
+        const pinVal = document.getElementById('pinInput')?.value || '';
+        if (state.is_keyholder) {
+            authArea.innerHTML = '<span class="badge">Keyholder</span>' +
+                '<button class="btn btn-sm btn-outline" onclick="doLogout()">Logout</button>';
+        } else {
+            authArea.innerHTML = '<input type="password" id="pinInput" placeholder="PIN" onkeydown="if(event.key===\'Enter\')doLogin()">' +
+                '<button class="btn btn-sm btn-primary" onclick="doLogin()">Login</button>';
+            if (pinVal) document.getElementById('pinInput').value = pinVal;
+        }
+
+        // Keyholder section
+        const ks = document.getElementById('keyholderSection');
+        if (state.is_keyholder) {
+            ks.classList.add('visible');
+        } else {
+            ks.classList.remove('visible');
+        }
+
+        // Lock button text
+        const lockBtn = document.getElementById('lockBtn');
+        if (lockBtn) {
+            lockBtn.textContent = state.lock?.locked ? 'Unlock System' : 'Lock System';
+        }
+
+        // Close / cancel toggle
+        const closeRow = document.getElementById('closeRow');
+        const cancelRow = document.getElementById('cancelRow');
+        if (state.closing?.active) {
+            closeRow.style.display = 'none';
+            cancelRow.style.display = 'block';
+        } else {
+            closeRow.style.display = 'flex';
+            cancelRow.style.display = 'none';
+        }
+    }
+
+    // Start polling
+    poll();
+    setInterval(poll, 1500);
+</script>
+
 </body>
 </html>

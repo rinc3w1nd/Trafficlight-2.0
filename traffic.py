@@ -6,6 +6,7 @@ with red, yellow, and green LEDs via gpiozero.
 """
 
 import atexit
+import hmac
 import logging
 import os
 import threading
@@ -13,7 +14,7 @@ from datetime import datetime, timedelta
 from random import choice
 from time import sleep
 
-from flask import Flask, abort, redirect, render_template, request, url_for
+from flask import Flask, jsonify, render_template, request, session
 from gpiozero import TrafficLights
 
 # ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ PARTY_SINGLE_ITERATIONS: int = 19
 COUNTDOWN_STEP_DELAY: float = 1.0
 LIGHT_ORDER: tuple[str, ...] = ("red", "yellow", "green")
 VALID_COLORS: set[str] = set(LIGHT_ORDER)
-VALID_ACTIONS: set[str] = {"on", "off", "toggle", "party"}
+VALID_ACTIONS: set[str] = {"on", "off", "toggle"}
 MAX_RAGER_ITERATIONS: int = 100
 
 # Closing countdown configuration
@@ -41,6 +42,13 @@ CLOSING_FLASH_MINUTES: int = 10
 CLOSING_HOLD_MINUTES: int = 30
 FLASH_SPEED_START: float = 1.0
 FLASH_SPEED_END: float = 0.1
+
+# Auth configuration
+KEYHOLDER_PIN: str = os.environ.get(
+    "TRAFFIC_KEYHOLDER_PIN",
+    os.environ.get("TRAFFIC_PASSWORD", "1234"),
+)
+SECRET_KEY: str = os.environ.get("TRAFFIC_SECRET_KEY", "change-me-in-production")
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -72,6 +80,11 @@ closing_state: dict = {
     "thread": None,
     "cancel_event": None,
 }
+
+# ---------------------------------------------------------------------------
+# Lock state
+# ---------------------------------------------------------------------------
+lock_state: dict = {"locked": False, "locked_at": None}
 
 
 def get_closing_info() -> dict:
@@ -200,39 +213,92 @@ def count_down() -> None:
         led.off()
 
 
+def is_keyholder() -> bool:
+    """Check if the current session is authenticated as keyholder."""
+    return session.get("keyholder", False)
+
+
+def can_control_lights() -> tuple[bool, str | None]:
+    """Check if light control is currently allowed.
+
+    Returns (allowed, reason) — reason is None when allowed.
+    """
+    if lock_state["locked"] and not is_keyholder():
+        return False, "System is locked by keyholder."
+    if closing_state["active"] and not is_keyholder():
+        return False, "Closing in progress — lights are locked."
+    return True, None
+
+
 # ---------------------------------------------------------------------------
 # Flask application
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
+app.secret_key = SECRET_KEY
 
 
 @app.route("/")
 def main() -> str:
-    """Render the main page showing current light states."""
-    return render_template(
-        "main.html",
-        pins=get_light_states(),
-        closing=get_closing_info(),
-        message=request.args.get("msg"),
-    )
+    """Serve the dashboard HTML."""
+    return render_template("main.html")
 
 
-@app.route("/toggle/<color>/<action>")
-def toggle(color: str, action: str) -> str:
-    """Control a single traffic light.
+# ---------------------------------------------------------------------------
+# API endpoints
+# ---------------------------------------------------------------------------
+@app.route("/api/status")
+def api_status():
+    """Full state for polling: lights, closing, lock, auth."""
+    lights = get_light_states()
+    closing = get_closing_info()
+    return jsonify({
+        "lights": {color: info["state"] for color, info in lights.items()},
+        "closing": closing,
+        "lock": {
+            "locked": lock_state["locked"],
+            "locked_at": lock_state["locked_at"],
+        },
+        "is_keyholder": is_keyholder(),
+    })
 
-    Args:
-        color: One of 'red', 'yellow', 'green'.
-        action: One of 'on', 'off', 'toggle', 'party'.
-    """
-    if closing_state["active"]:
-        abort(403, description="Closing in progress — lights are locked.")
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    """Authenticate with PIN, sets session."""
+    data = request.get_json(silent=True) or {}
+    pin = data.get("pin", "")
+
+    if hmac.compare_digest(str(pin), KEYHOLDER_PIN):
+        session["keyholder"] = True
+        logger.info("Keyholder authenticated")
+        return jsonify({"ok": True, "message": "Authenticated as keyholder."})
+
+    logger.warning("Failed keyholder login attempt")
+    return jsonify({"ok": False, "message": "Invalid PIN."}), 401
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_logout():
+    """Clear keyholder session."""
+    if not is_keyholder():
+        return jsonify({"ok": False, "message": "Not authenticated."}), 401
+
+    session.pop("keyholder", None)
+    logger.info("Keyholder logged out")
+    return jsonify({"ok": True, "message": "Logged out."})
+
+
+@app.route("/api/light/<color>/<action>", methods=["POST"])
+def api_light(color: str, action: str):
+    """Control a single traffic light (on/off/toggle)."""
+    allowed, reason = can_control_lights()
+    if not allowed:
+        return jsonify({"ok": False, "message": reason}), 403
+
     if color not in VALID_COLORS:
-        logger.warning("Invalid color requested: %s", color)
-        abort(404, description=f"Unknown color: {color}")
+        return jsonify({"ok": False, "message": f"Unknown color: {color}"}), 404
     if action not in VALID_ACTIONS:
-        logger.warning("Invalid action requested: %s", action)
-        abort(404, description=f"Unknown action: {action}")
+        return jsonify({"ok": False, "message": f"Unknown action: {action}"}), 404
 
     led = getattr(traffic_lights, color)
 
@@ -245,31 +311,24 @@ def toggle(color: str, action: str) -> str:
     elif action == "toggle":
         led.toggle()
         message = f"Toggled {color}."
-    elif action == "party":
-        for _ in range(PARTY_SINGLE_ITERATIONS):
-            blinky_blink(color)
-        message = "Partied hard."
 
     logger.info(message)
-    return render_template("main.html", message=message, pins=get_light_states())
+    return jsonify({"ok": True, "message": message})
 
 
-@app.route("/rager/")
-@app.route("/rager/<iterations>")
-def party_hard(iterations: str = "5") -> str:
-    """Run a random blink party across all lights.
+@app.route("/api/rager", methods=["POST"])
+def api_rager():
+    """Party mode with configurable iterations."""
+    allowed, reason = can_control_lights()
+    if not allowed:
+        return jsonify({"ok": False, "message": reason}), 403
 
-    Args:
-        iterations: Number of random blinks (default 5, capped at 100).
-    """
-    if closing_state["active"]:
-        abort(403, description="Closing in progress — lights are locked.")
+    data = request.get_json(silent=True) or {}
     try:
-        num_iterations = min(int(iterations), MAX_RAGER_ITERATIONS)
-        if num_iterations < 0:
+        num_iterations = min(int(data.get("iterations", PARTY_DEFAULT_ITERATIONS)), MAX_RAGER_ITERATIONS)
+        if num_iterations < 1:
             num_iterations = PARTY_DEFAULT_ITERATIONS
-    except ValueError:
-        logger.warning("Invalid iterations value: %r, using default", iterations)
+    except (ValueError, TypeError):
         num_iterations = PARTY_DEFAULT_ITERATIONS
 
     count_down()
@@ -280,31 +339,45 @@ def party_hard(iterations: str = "5") -> str:
         blinky_blink(choice(colors))
 
     logger.info("Rager completed: %d iterations", num_iterations)
-    return render_template("main.html", pins=get_light_states())
+    return jsonify({"ok": True, "message": f"Partied hard ({num_iterations} iterations)."})
 
 
-@app.route("/close", methods=["POST"])
-def schedule_close() -> str:
-    """Schedule a closing countdown. Requires keyholder password and minutes."""
-    password = request.form.get("password", "")
-    minutes_str = request.form.get("minutes", "")
+@app.route("/api/lock", methods=["POST"])
+def api_lock():
+    """Set lock state (keyholder only)."""
+    if not is_keyholder():
+        return jsonify({"ok": False, "message": "Keyholder authentication required."}), 403
 
-    if password != KEYHOLDER_PASSWORD:
-        return redirect(url_for("main", msg="Invalid password."))
+    data = request.get_json(silent=True) or {}
+    locked = data.get("locked", True)
 
+    lock_state["locked"] = bool(locked)
+    lock_state["locked_at"] = datetime.now().isoformat() if locked else None
+
+    action = "locked" if locked else "unlocked"
+    logger.info("System %s by keyholder", action)
+    return jsonify({"ok": True, "message": f"System {action}."})
+
+
+@app.route("/api/close", methods=["POST"])
+def api_close():
+    """Schedule a closing countdown (keyholder only)."""
+    if not is_keyholder():
+        return jsonify({"ok": False, "message": "Keyholder authentication required."}), 403
+
+    if closing_state["active"]:
+        return jsonify({"ok": False, "message": "Closing already in progress."}), 409
+
+    data = request.get_json(silent=True) or {}
     try:
-        minutes = int(minutes_str)
+        minutes = int(data.get("minutes", 0))
         if minutes < 1:
             raise ValueError
     except (ValueError, TypeError):
-        return redirect(url_for("main", msg="Invalid number of minutes."))
-
-    if closing_state["active"]:
-        return redirect(url_for("main", msg="Closing already in progress."))
+        return jsonify({"ok": False, "message": "Invalid number of minutes."}), 400
 
     close_time = datetime.now() + timedelta(minutes=minutes)
 
-    # If the requested time is shorter than the warning phase, start warning immediately
     closing_state["close_time"] = close_time
     closing_state["active"] = True
     closing_state["phase"] = "normal"
@@ -315,19 +388,17 @@ def schedule_close() -> str:
     thread.start()
 
     logger.info("Closing scheduled in %d minutes (at %s)", minutes, close_time.strftime("%-I:%M %p"))
-    return redirect(url_for("main"))
+    return jsonify({"ok": True, "message": f"Closing scheduled in {minutes} minutes."})
 
 
-@app.route("/cancel-close", methods=["POST"])
-def cancel_close() -> str:
-    """Cancel an active closing countdown. Requires keyholder password."""
-    password = request.form.get("password", "")
-
-    if password != KEYHOLDER_PASSWORD:
-        return redirect(url_for("main", msg="Invalid password."))
+@app.route("/api/cancel-close", methods=["POST"])
+def api_cancel_close():
+    """Cancel an active closing countdown (keyholder only)."""
+    if not is_keyholder():
+        return jsonify({"ok": False, "message": "Keyholder authentication required."}), 403
 
     if not closing_state["active"]:
-        return redirect(url_for("main", msg="No closing in progress."))
+        return jsonify({"ok": False, "message": "No closing in progress."}), 409
 
     cancel_event = closing_state["cancel_event"]
     thread = closing_state["thread"]
@@ -339,7 +410,7 @@ def cancel_close() -> str:
     # Reset lights to off after cancellation
     traffic_lights.off()
     logger.info("Closing cancelled by keyholder")
-    return redirect(url_for("main"))
+    return jsonify({"ok": True, "message": "Closing cancelled."})
 
 
 # ---------------------------------------------------------------------------
